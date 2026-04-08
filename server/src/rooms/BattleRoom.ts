@@ -1,5 +1,5 @@
 import { Client, Room } from "colyseus";
-import { BattleState, CardSchema, PlayerSchema } from "../schema/BattleState.js";
+import { BattleState, CardSchema, MonsterSchema, PlayerSchema } from "../schema/BattleState.js";
 
 type CardDefinition = {
   id: string;
@@ -10,6 +10,10 @@ type CardDefinition = {
 type PlayCardPayload = {
   cardId: string;
   targetId: string;
+};
+
+type DiscardCardPayload = {
+  cardId: string;
 };
 
 const TICK_MS = 100;
@@ -29,8 +33,8 @@ const cardById = new Map<string, CardDefinition>(CARD_LIBRARY.map((card) => [car
 
 export class BattleRoom extends Room<BattleState> {
   private lastUpdateAt = Date.now();
-  private monsterAttackAccumulatorMs = 0;
   private manaAccumulatorMs = 0;
+  private monsterAttackAccumulatorByMonsterId = new Map<string, number>();
   private deckStateByPlayerId = new Map<
     string,
     {
@@ -48,9 +52,12 @@ export class BattleRoom extends Room<BattleState> {
 
   onCreate() {
     this.setState(new BattleState());
-    this.createSingleMonsterEncounter();
+    this.createMonsterEncounter();
     this.onMessage("playCard", (client, payload: PlayCardPayload) => {
       this.handlePlayCard(client, payload);
+    });
+    this.onMessage("discardCard", (client, payload: DiscardCardPayload) => {
+      this.handleDiscardCard(client, payload);
     });
     this.setSimulationInterval(() => this.onUpdate(), TICK_MS);
   }
@@ -107,17 +114,23 @@ export class BattleRoom extends Room<BattleState> {
   }
 
   private updateMonsterAttacks(dtMs: number) {
-    this.monsterAttackAccumulatorMs += dtMs;
-    const interval = this.state.monster.attackIntervalMs;
-    while (this.monsterAttackAccumulatorMs >= interval) {
-      this.monsterAttackAccumulatorMs -= interval;
-      this.resolveMonsterAutoAttack();
-    }
+    this.state.monsters.forEach((monster, monsterId) => {
+      if (monster.hp <= 0) {
+        return;
+      }
+      const previous = this.monsterAttackAccumulatorByMonsterId.get(monsterId) ?? 0;
+      let current = previous + dtMs;
+      while (current >= monster.attackIntervalMs) {
+        current -= monster.attackIntervalMs;
+        this.resolveMonsterAutoAttack(monsterId);
+      }
+      this.monsterAttackAccumulatorByMonsterId.set(monsterId, current);
+    });
   }
 
-  private resolveMonsterAutoAttack() {
-    const monster = this.state.monster;
-    if (monster.hp <= 0) {
+  private resolveMonsterAutoAttack(monsterId: string) {
+    const monster = this.state.monsters.get(monsterId);
+    if (!monster || monster.hp <= 0) {
       return;
     }
     const player = this.getFirstLivingPlayer();
@@ -138,8 +151,8 @@ export class BattleRoom extends Room<BattleState> {
     if (!player || player.hp <= 0) {
       return;
     }
-    const target = this.state.monster;
-    if (payload.targetId !== target.id || target.hp <= 0) {
+    const target = this.state.monsters.get(payload.targetId);
+    if (!target || target.hp <= 0) {
       return;
     }
     const handIndex = player.hand.indexOf(payload.cardId);
@@ -175,6 +188,33 @@ export class BattleRoom extends Room<BattleState> {
       value: definition.value
     });
     this.sendDeckState(client.sessionId);
+  }
+
+  private handleDiscardCard(client: Client, payload: DiscardCardPayload) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.hp <= 0) {
+      return;
+    }
+    const handIndex = player.hand.indexOf(payload.cardId);
+    if (handIndex === -1) {
+      return;
+    }
+    const deckState = this.deckStateByPlayerId.get(player.id);
+    if (!deckState) {
+      return;
+    }
+
+    player.hand.splice(handIndex, 1);
+    deckState.discardPile.push(payload.cardId);
+    this.drawCards(player.id, 1);
+    this.sendDeckState(client.sessionId);
+    this.send(client, "combatEvent", {
+      type: "playerCardDiscarded",
+      sourceId: player.id,
+      targetId: "",
+      cardId: payload.cardId,
+      value: 0
+    });
   }
 
   private drawUpToHandSize(playerId: string) {
@@ -259,13 +299,30 @@ export class BattleRoom extends Room<BattleState> {
     }
   }
 
-  private createSingleMonsterEncounter() {
-    this.state.monster.id = "monster_1";
-    this.state.monster.name = "Forest Wraith";
-    this.state.monster.hp = 120;
-    this.state.monster.maxHp = 120;
-    this.state.monster.attackDamage = 7;
-    this.state.monster.attackIntervalMs = 3000;
+  private createMonsterEncounter() {
+    const encounter: Array<{
+      id: string;
+      name: string;
+      hp: number;
+      attackDamage: number;
+      attackIntervalMs: number;
+    }> = [
+      { id: "monster_1", name: "Forest Wraith", hp: 120, attackDamage: 7, attackIntervalMs: 3000 },
+      { id: "monster_2", name: "Bog Raider", hp: 95, attackDamage: 5, attackIntervalMs: 2300 },
+      { id: "monster_3", name: "Ash Crawler", hp: 80, attackDamage: 4, attackIntervalMs: 1800 }
+    ];
+
+    encounter.forEach((definition) => {
+      const monster = new MonsterSchema();
+      monster.id = definition.id;
+      monster.name = definition.name;
+      monster.hp = definition.hp;
+      monster.maxHp = definition.hp;
+      monster.attackDamage = definition.attackDamage;
+      monster.attackIntervalMs = definition.attackIntervalMs;
+      this.state.monsters.set(monster.id, monster);
+      this.monsterAttackAccumulatorByMonsterId.set(monster.id, 0);
+    });
 
     CARD_LIBRARY.forEach((card) => {
       const cardSchema = new CardSchema();

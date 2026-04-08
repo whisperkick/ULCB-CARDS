@@ -31,22 +31,24 @@ Boilerplate for a **2D reactive multiplayer card RPG** using:
   - `CardSchema`
   - `PlayerSchema` (`hp`, `mana`, `hand`, etc.)
   - `MonsterSchema`
-  - `BattleState`
+  - `BattleState` (`players`, `monsters`, `cardLibrary`)
 - `server/src/rooms/BattleRoom.ts`:
   - Simulation update loop (`onUpdate`)
-  - Mana regen + monster timer
-  - `playCard` validation and damage flow
+  - Mana regen + per-monster auto-attack timers
+  - `playCard` validation and targeted damage flow
+  - `discardCard` action to cycle hand cards
   - Deck/discard draw replacement behavior
 
 ### 2D client (animation-lite)
 
 - `client/src/main.ts`:
   - Battle controller for Colyseus sync
-  - UI manager for hand cards + mana bar
+  - UI manager for hand cards + mana bar + target selection
   - Tween feedback:
     - player lunge on card play
-    - monster shudder on hit
+    - monsters shudder on hit and lunge on attack
     - screen shake + player fade flash on damage
+  - Card discard button per hand card (discard + draw replacement)
 
 ## Run locally
 

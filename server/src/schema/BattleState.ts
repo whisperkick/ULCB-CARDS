@@ -30,6 +30,6 @@ export class MonsterSchema extends Schema {
 
 export class BattleState extends Schema {
   @type({ map: PlayerSchema }) players = new MapSchema<PlayerSchema>();
-  @type(MonsterSchema) monster = new MonsterSchema();
+  @type({ map: MonsterSchema }) monsters = new MapSchema<MonsterSchema>();
   @type({ map: CardSchema }) cardLibrary = new MapSchema<CardSchema>();
 }

@@ -18,8 +18,11 @@ type PlayerLike = {
 
 type MonsterLike = {
   id: string;
+  name: string;
   hp: number;
   maxHp: number;
+  attackDamage: number;
+  attackIntervalMs: number;
   onChange: (cb: () => void) => void;
 };
 
@@ -29,11 +32,18 @@ type DeckStateMessage = {
 };
 
 type CombatEventMessage = {
-  type: "monsterAttack" | "playerCardPlayed";
+  type: "monsterAttack" | "playerCardPlayed" | "playerCardDiscarded";
   sourceId: string;
   targetId: string;
   cardId?: string;
   value: number;
+};
+
+type MonsterSnapshot = {
+  id: string;
+  name: string;
+  hp: number;
+  maxHp: number;
 };
 
 class BattleUIManager {
@@ -47,15 +57,25 @@ class BattleUIManager {
   private statusText: Phaser.GameObjects.Text;
   private handButtons: Phaser.GameObjects.Container[] = [];
   private readonly onCardSelected: (cardId: string) => void;
+  private readonly onCardDiscarded: (cardId: string) => void;
+  private readonly onMonsterSelected: (monsterId: string) => void;
+  private monsterButtons: Phaser.GameObjects.Container[] = [];
 
-  constructor(scene: Phaser.Scene, onCardSelected: (cardId: string) => void) {
+  constructor(
+    scene: Phaser.Scene,
+    onCardSelected: (cardId: string) => void,
+    onCardDiscarded: (cardId: string) => void,
+    onMonsterSelected: (monsterId: string) => void
+  ) {
     this.scene = scene;
     this.onCardSelected = onCardSelected;
+    this.onCardDiscarded = onCardDiscarded;
+    this.onMonsterSelected = onMonsterSelected;
     this.playerText = this.scene.add.text(120, 320, "Player HP: --", {
       color: "#ffffff",
       fontSize: "20px"
     });
-    this.monsterText = this.scene.add.text(560, 320, "Monster HP: --", {
+    this.monsterText = this.scene.add.text(430, 320, "Target HP: --", {
       color: "#ffffff",
       fontSize: "20px"
     });
@@ -82,13 +102,13 @@ class BattleUIManager {
   renderVitals(params: {
     playerHp: number;
     playerMaxHp: number;
-    monsterHp: number;
-    monsterMaxHp: number;
+    targetMonsterHp: number;
+    targetMonsterMaxHp: number;
     playerMana: number;
     playerMaxMana: number;
   }): void {
     this.playerText.setText(`Player HP: ${params.playerHp}/${params.playerMaxHp}`);
-    this.monsterText.setText(`Monster HP: ${params.monsterHp}/${params.monsterMaxHp}`);
+    this.monsterText.setText(`Target HP: ${params.targetMonsterHp}/${params.targetMonsterMaxHp}`);
     this.manaText.setText(`Mana: ${params.playerMana}/${params.playerMaxMana}`);
     const ratio = params.playerMaxMana > 0 ? params.playerMana / params.playerMaxMana : 0;
     this.manaBarFill.width = 220 * Phaser.Math.Clamp(ratio, 0, 1);
@@ -118,18 +138,36 @@ class BattleUIManager {
         fontSize: "14px",
         wordWrap: { width: 100 }
       });
-      const stats = this.scene.add.text(-48, 10, `Cost: ${cardDef.cost}\nDmg: ${cardDef.value}`, {
+      const stats = this.scene.add.text(-48, -4, `Cost: ${cardDef.cost}\nDmg: ${cardDef.value}`, {
         color: "#8be58b",
         fontSize: "16px"
       });
+      const discardButton = this.scene.add.rectangle(0, 50, 96, 24, 0x5f3b57);
+      discardButton.setStrokeStyle(1, 0xdca5cf);
+      const discardLabel = this.scene.add.text(-30, 42, "Discard", {
+        color: "#ffdff2",
+        fontSize: "13px"
+      });
 
-      const container = this.scene.add.container(startX + spacing * index, y, [bg, label, stats]);
+      const container = this.scene.add.container(startX + spacing * index, y, [
+        bg,
+        label,
+        stats,
+        discardButton,
+        discardLabel
+      ]);
       container.setSize(120, 140);
       container.setInteractive(
         new Phaser.Geom.Rectangle(-60, -70, 120, 140),
         Phaser.Geom.Rectangle.Contains
       );
-      container.on("pointerdown", () => this.onCardSelected(cardId));
+      container.on("pointerdown", (_pointer: Phaser.Input.Pointer, localX: number, localY: number) => {
+        if (localY > 35) {
+          this.onCardDiscarded(cardId);
+          return;
+        }
+        this.onCardSelected(cardId);
+      });
       container.on("pointerover", () => {
         this.scene.tweens.add({ targets: container, y: y - 10, duration: 100 });
       });
@@ -137,6 +175,44 @@ class BattleUIManager {
         this.scene.tweens.add({ targets: container, y, duration: 100 });
       });
       this.handButtons.push(container);
+    });
+  }
+
+  renderMonsters(monsters: MonsterSnapshot[], selectedMonsterId: string | undefined): void {
+    for (const button of this.monsterButtons) {
+      button.destroy();
+    }
+    this.monsterButtons = [];
+
+    const baseX = 430;
+    const y = 170;
+    const spacing = 170;
+
+    monsters.forEach((monster, index) => {
+      const isSelected = selectedMonsterId === monster.id;
+      const bg = this.scene.add.rectangle(0, 0, 150, 110, isSelected ? 0x5b2f2f : 0x2b1f2f);
+      bg.setStrokeStyle(2, isSelected ? 0xffd35c : 0x9a7d7d);
+      const title = this.scene.add.text(-66, -42, monster.name, {
+        color: "#fff1f1",
+        fontSize: "14px",
+        wordWrap: { width: 132 }
+      });
+      const hpText = this.scene.add.text(-66, 2, `HP: ${monster.hp}/${monster.maxHp}`, {
+        color: "#ffd0d0",
+        fontSize: "16px"
+      });
+      const pickText = this.scene.add.text(-66, 30, isSelected ? "Selected target" : "Click to target", {
+        color: isSelected ? "#ffe89c" : "#c9b1b1",
+        fontSize: "12px"
+      });
+      const container = this.scene.add.container(baseX + index * spacing, y, [bg, title, hpText, pickText]);
+      container.setSize(150, 110);
+      container.setInteractive(
+        new Phaser.Geom.Rectangle(-75, -55, 150, 110),
+        Phaser.Geom.Rectangle.Contains
+      );
+      container.on("pointerdown", () => this.onMonsterSelected(monster.id));
+      this.monsterButtons.push(container);
     });
   }
 }
@@ -151,14 +227,13 @@ class BattleScene extends Phaser.Scene {
   private playerMaxHp = 0;
   private playerMana = 0;
   private playerMaxMana = 0;
-  private monsterHp = 0;
-  private monsterMaxHp = 0;
+  private monsters = new Map<string, MonsterSnapshot>();
   private drawPileCount = 0;
   private discardPileCount = 0;
-  private monsterId = "monster_1";
+  private selectedMonsterId?: string;
 
   private uiManager?: BattleUIManager;
-  private monsterSprite?: Phaser.GameObjects.Rectangle;
+  private monsterSprites = new Map<string, Phaser.GameObjects.Rectangle>();
   private playerSprite?: Phaser.GameObjects.Rectangle;
 
   constructor() {
@@ -168,8 +243,12 @@ class BattleScene extends Phaser.Scene {
   public create(): void {
     this.cameras.main.setBackgroundColor("#1b1b2f");
     this.playerSprite = this.add.rectangle(180, 240, 90, 120, 0x4e9fd1);
-    this.monsterSprite = this.add.rectangle(620, 220, 110, 140, 0xc24646);
-    this.uiManager = new BattleUIManager(this, (cardId) => this.tryPlayCard(cardId));
+    this.uiManager = new BattleUIManager(
+      this,
+      (cardId) => this.tryPlayCard(cardId),
+      (cardId) => this.tryDiscardCard(cardId),
+      (monsterId) => this.selectMonster(monsterId)
+    );
 
     this.connect().catch((error) => {
       this.uiManager?.setStatus(`Connection failed: ${String(error)}`);
@@ -184,9 +263,24 @@ class BattleScene extends Phaser.Scene {
     this.uiManager?.setStatus("Connected. Fight!");
 
     this.hydrateCardLibrary();
-    this.monsterId = this.room.state.monster.id;
-    this.monsterHp = this.room.state.monster.hp;
-    this.monsterMaxHp = this.room.state.monster.maxHp;
+    this.room.state.monsters.forEach((monster: MonsterLike, key: string) => {
+      this.registerMonster(monster, key);
+    });
+    this.room.state.monsters.onAdd((monster: MonsterLike, key: string) => {
+      this.registerMonster(monster, key);
+    });
+    this.room.state.monsters.onRemove((_monster: MonsterLike, key: string) => {
+      this.monsters.delete(key);
+      const sprite = this.monsterSprites.get(key);
+      if (sprite) {
+        sprite.destroy();
+      }
+      this.monsterSprites.delete(key);
+      if (this.selectedMonsterId === key) {
+        this.selectedMonsterId = this.getFirstLivingMonsterId();
+      }
+      this.renderHud();
+    });
 
     this.room.onMessage("deckState", (message: DeckStateMessage) => {
       this.drawPileCount = message.drawPileCount;
@@ -200,14 +294,10 @@ class BattleScene extends Phaser.Scene {
 
     this.room.onMessage("combatEvent", (event: CombatEventMessage) => {
       if (event.type === "monsterAttack") {
-        this.takeDamage("player");
+        this.monsterAttackTween(event.sourceId);
       }
-      if (
-        event.type === "playerCardPlayed" &&
-        event.targetId === this.monsterId &&
-        event.sourceId === this.playerId
-      ) {
-        this.monsterHitTween();
+      if (event.type === "playerCardDiscarded" && event.sourceId === this.playerId) {
+        this.uiManager?.setStatus(`Discarded ${event.cardId ?? "card"} and drew a replacement.`);
       }
     });
 
@@ -226,13 +316,6 @@ class BattleScene extends Phaser.Scene {
       });
     });
 
-    const monster = this.room.state.monster as MonsterLike;
-    monster.onChange(() => {
-      this.monsterHp = monster.hp;
-      this.monsterMaxHp = monster.maxHp;
-      this.renderHud();
-    });
-
     this.renderHud();
     this.uiManager?.renderHand(this.handCardIds, this.cardLibrary);
   }
@@ -248,26 +331,42 @@ class BattleScene extends Phaser.Scene {
   }
 
   private renderHud(): void {
+    const targetMonster = this.getSelectedOrFallbackMonster();
+    const targetMonsterHp = targetMonster?.hp ?? 0;
+    const targetMonsterMaxHp = targetMonster?.maxHp ?? 0;
     this.uiManager?.renderVitals({
       playerHp: this.playerHp,
       playerMaxHp: this.playerMaxHp,
-      monsterHp: this.monsterHp,
-      monsterMaxHp: this.monsterMaxHp,
+      targetMonsterHp,
+      targetMonsterMaxHp,
       playerMana: this.playerMana,
       playerMaxMana: this.playerMaxMana
     });
     this.uiManager?.renderDeckCounts(this.drawPileCount, this.discardPileCount);
+    this.uiManager?.renderMonsters([...this.monsters.values()], this.selectedMonsterId);
   }
 
   private tryPlayCard(cardId: string): void {
     if (!this.room) {
       return;
     }
+    const targetId = this.selectedMonsterId ?? this.getFirstLivingMonsterId();
+    if (!targetId) {
+      this.uiManager?.setStatus("No living monster to target.");
+      return;
+    }
     this.playerAttackTween();
     this.room.send("playCard", {
       cardId,
-      targetId: this.monsterId
+      targetId
     });
+  }
+
+  private tryDiscardCard(cardId: string): void {
+    if (!this.room) {
+      return;
+    }
+    this.room.send("discardCard", { cardId });
   }
 
   private playerAttackTween(): void {
@@ -283,23 +382,38 @@ class BattleScene extends Phaser.Scene {
     });
   }
 
-  private monsterHitTween(): void {
-    if (!this.monsterSprite) {
+  private monsterHitTween(monsterId: string): void {
+    const sprite = this.monsterSprites.get(monsterId);
+    if (!sprite) {
       return;
     }
     this.tweens.add({
-      targets: this.monsterSprite,
-      x: this.monsterSprite.x + 12,
+      targets: sprite,
+      x: sprite.x + 12,
       yoyo: true,
       repeat: 2,
       duration: 50
     });
     this.tweens.add({
-      targets: this.monsterSprite,
+      targets: sprite,
       alpha: 0.45,
       yoyo: true,
       repeat: 1,
       duration: 70
+    });
+  }
+
+  private monsterAttackTween(monsterId: string): void {
+    const sprite = this.monsterSprites.get(monsterId);
+    if (!sprite) {
+      return;
+    }
+    this.tweens.add({
+      targets: sprite,
+      x: sprite.x - 16,
+      duration: 90,
+      yoyo: true,
+      ease: "Quad.easeInOut"
     });
   }
 
@@ -314,7 +428,9 @@ class BattleScene extends Phaser.Scene {
       });
     }
     if (target === "monster") {
-      this.monsterHitTween();
+      if (this.selectedMonsterId) {
+        this.monsterHitTween(this.selectedMonsterId);
+      }
     }
     this.cameras.main.shake(120, 0.008);
   }
@@ -328,6 +444,77 @@ class BattleScene extends Phaser.Scene {
         value: value.value
       };
     });
+  }
+
+  private registerMonster(monster: MonsterLike, key: string): void {
+    this.monsters.set(key, {
+      id: monster.id,
+      name: monster.name,
+      hp: monster.hp,
+      maxHp: monster.maxHp
+    });
+    if (!this.selectedMonsterId || !this.isMonsterLiving(this.selectedMonsterId)) {
+      this.selectedMonsterId = key;
+    }
+    if (!this.monsterSprites.has(key)) {
+      const index = this.monsterSprites.size;
+      const sprite = this.add.rectangle(430 + index * 170, 170, 80, 90, 0xc24646);
+      this.monsterSprites.set(key, sprite);
+    }
+    monster.onChange(() => {
+      const previous = this.monsters.get(key);
+      this.monsters.set(key, {
+        id: monster.id,
+        name: monster.name,
+        hp: monster.hp,
+        maxHp: monster.maxHp
+      });
+      if (previous && monster.hp < previous.hp) {
+        this.monsterHitTween(key);
+      }
+      if (this.selectedMonsterId === key && monster.hp <= 0) {
+        this.selectedMonsterId = this.getFirstLivingMonsterId();
+      }
+      this.renderHud();
+    });
+    this.renderHud();
+  }
+
+  private selectMonster(monsterId: string): void {
+    if (!this.isMonsterLiving(monsterId)) {
+      return;
+    }
+    this.selectedMonsterId = monsterId;
+    this.renderHud();
+  }
+
+  private isMonsterLiving(monsterId: string): boolean {
+    const monster = this.monsters.get(monsterId);
+    return Boolean(monster && monster.hp > 0);
+  }
+
+  private getFirstLivingMonsterId(): string | undefined {
+    for (const monster of this.monsters.values()) {
+      if (monster.hp > 0) {
+        return monster.id;
+      }
+    }
+    return undefined;
+  }
+
+  private getSelectedOrFallbackMonster(): MonsterSnapshot | undefined {
+    if (this.selectedMonsterId) {
+      const selected = this.monsters.get(this.selectedMonsterId);
+      if (selected && selected.hp > 0) {
+        return selected;
+      }
+    }
+    const firstId = this.getFirstLivingMonsterId();
+    if (!firstId) {
+      return undefined;
+    }
+    this.selectedMonsterId = firstId;
+    return this.monsters.get(firstId);
   }
 }
 
