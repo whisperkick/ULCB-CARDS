@@ -1,0 +1,14 @@
+{
+  "name": "ulcb-cards",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "dev:server": "npm run dev --workspace server",
+    "dev:client": "npm run dev --workspace client"
+  }
+}
